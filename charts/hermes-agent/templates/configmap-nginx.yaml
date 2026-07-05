@@ -23,10 +23,10 @@ data:
         auth_basic_user_file /etc/nginx/.htpasswd;
 
         proxy_pass http://127.0.0.1:{{ .Values.ports.dashboard }};
-        # The dashboard binds 127.0.0.1 and validates Host against its bind
-        # (rejects a public Host with 400). Send the loopback Host it expects;
-        # HERMES_DASHBOARD_PUBLIC_URL + X-Forwarded-* carry the real identity.
-        proxy_set_header Host              127.0.0.1:{{ .Values.ports.dashboard }};
+        # Dashboard binds 0.0.0.0 --insecure (accepts any Host/Origin), so we
+        # forward the real public Host — needed for its WebSocket Host/Origin
+        # guard to pass and for correct URL generation.
+        proxy_set_header Host              $host;
         proxy_set_header X-Forwarded-Host  $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;

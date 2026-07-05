@@ -95,3 +95,24 @@ helm template charts/hermes | grep -Ei 'api[_-]?key|password:|BEGIN [A-Z ]*PRIVA
 - Off-cluster S3 backup of `/opt/data` (WP008).
 - Cloudflare Tunnel/Access exposure of the dashboard (follows the
   `clusters/dev/cloudflared` pattern once WP011's exposure decision lands).
+
+
+## Dashboard authentication (nginx Basic Auth)
+The dashboard binds `127.0.0.1` inside the pod; an **nginx** sidecar
+(`dashboard-proxy`) in front provides HTTP **Basic Auth** and is the only
+reachable entrypoint (the Service targets it). Cloudflare Access is the
+intended outer layer once Zero Trust is enabled.
+
+Create the htpasswd Secret before deploying:
+```
+htpasswd -nbB <user> <pass> > htpasswd
+kubectl -n hermes create secret generic hermes-dashboard-auth --from-file=htpasswd=./htpasswd
+```
+
+## Required Secrets (create in the `hermes` namespace, sourced from Mintkey)
+| Secret | Consumed by | Must define |
+|---|---|---|
+| `hermes-dashboard-auth` | nginx proxy | `htpasswd` (a bcrypt htpasswd file) |
+| `hermes-llm-secret` | gateway/dashboard | the OpenAI-compatible key (any non-empty value for Ollama), e.g. `OPENAI_API_KEY` |
+| `hermes-mcp-mintkey-secret` | gateway | `MCP_MINTKEY_AUTHORIZATION` (Bearer header for the Mintkey MCP endpoint) |
+| `hermes-ssh-terminal-secret` | gateway | `TERMINAL_SSH_*` (host/user/key/port) |

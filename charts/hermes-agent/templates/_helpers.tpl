@@ -52,6 +52,14 @@ repository:tag@digest, same convention as charts/demo.
 {{- printf "%s:%s@%s" .Values.initContainer.image.repository .Values.initContainer.image.tag .Values.initContainer.image.digest -}}
 {{- end -}}
 
+{{- define "hermes.dashboardProxyImage" -}}
+{{- if .Values.dashboardProxy.image.digest -}}
+{{- printf "%s:%s@%s" .Values.dashboardProxy.image.repository .Values.dashboardProxy.image.tag .Values.dashboardProxy.image.digest -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.dashboardProxy.image.repository .Values.dashboardProxy.image.tag -}}
+{{- end -}}
+{{- end -}}
+
 {{- /*
 Name Kubernetes assigns to the PVC generated from the StatefulSet's
 volumeClaimTemplate named "data": "<templateName>-<statefulsetName>-<ordinal>".

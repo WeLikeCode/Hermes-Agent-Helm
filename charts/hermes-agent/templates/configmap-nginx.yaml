@@ -1,0 +1,40 @@
+{{- if and .Values.enabled .Values.dashboardProxy.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hermes.fullname" . }}-nginx
+  labels:
+    {{- include "hermes.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    map $http_upgrade $connection_upgrade {
+      default upgrade;
+      ''      close;
+    }
+    server {
+      listen {{ .Values.ports.dashboardProxy }};
+      server_name _;
+
+      # Large agent responses / uploads.
+      client_max_body_size {{ .Values.dashboardProxy.clientMaxBodySize }};
+
+      location / {
+        auth_basic "{{ .Values.dashboardProxy.realm }}";
+        auth_basic_user_file /etc/nginx/.htpasswd;
+
+        proxy_pass http://127.0.0.1:{{ .Values.ports.dashboard }};
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket (dashboard PTY/chat) + SSE (streaming) support.
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_buffering off;
+        proxy_read_timeout {{ .Values.dashboardProxy.proxyReadTimeout }};
+        proxy_send_timeout {{ .Values.dashboardProxy.proxyReadTimeout }};
+      }
+    }
+{{- end }}

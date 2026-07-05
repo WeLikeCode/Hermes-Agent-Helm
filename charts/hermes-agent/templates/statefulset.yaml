@@ -108,22 +108,23 @@ spec:
         - name: dashboard
           image: {{ include "hermes.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # React SPA + FastAPI admin UI.
-          command: ["dashboard", "--host", "0.0.0.0", "--no-open"]
+          # React SPA + FastAPI admin UI. When dashboardProxy is enabled it
+          # binds LOOPBACK only (127.0.0.1) — the nginx dashboard-proxy in
+          # front is the sole reachable entrypoint and provides Basic Auth
+          # (Hermes' own auth is off on a loopback bind, so nginx IS the gate).
+          command: ["dashboard", "--host", {{ ternary "127.0.0.1" "0.0.0.0" .Values.dashboardProxy.enabled | quote }}, "--no-open"]
+          {{- if not .Values.dashboardProxy.enabled }}
           ports:
             - name: dashboard
               containerPort: {{ .Values.ports.dashboard }}
               protocol: TCP
+          {{- end }}
           env:
             - name: HERMES_UID
               value: {{ .Values.hermes.uid | quote }}
             - name: HERMES_GID
               value: {{ .Values.hermes.gid | quote }}
           envFrom:
-            {{- if .Values.secrets.dashboardAuth.enabled }}
-            - secretRef:
-                name: {{ .Values.secrets.dashboardAuth.secretName }}
-            {{- end }}
             {{- if .Values.secrets.llm.enabled }}
             - secretRef:
                 name: {{ .Values.secrets.llm.secretName }}
@@ -133,6 +134,35 @@ spec:
               mountPath: {{ .Values.hermes.dataDir }}
           resources:
             {{- toYaml .Values.resources.dashboard | nindent 12 }}
+        {{- if .Values.dashboardProxy.enabled }}
+        - name: dashboard-proxy
+          image: {{ include "hermes.dashboardProxyImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # nginx reverse proxy: HTTP Basic Auth in front of the loopback
+          # dashboard. WebSocket (PTY/chat) + SSE (streaming) friendly.
+          ports:
+            - name: http
+              containerPort: {{ .Values.ports.dashboardProxy }}
+              protocol: TCP
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+            - name: dashboard-htpasswd
+              mountPath: /etc/nginx/.htpasswd
+              subPath: {{ .Values.dashboardProxy.htpasswdSecretKey }}
+          resources:
+            {{- toYaml .Values.resources.dashboardProxy | nindent 12 }}
+        {{- end }}
+      {{- if .Values.dashboardProxy.enabled }}
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: {{ include "hermes.fullname" . }}-nginx
+        - name: dashboard-htpasswd
+          secret:
+            secretName: {{ .Values.dashboardProxy.htpasswdSecretName }}
+      {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: data

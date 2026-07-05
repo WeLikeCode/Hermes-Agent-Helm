@@ -28,9 +28,9 @@ image:
   # by .github/workflows/hermes-image.yml → ghcr.io/welikecode/hermes-agent.
   repository: ghcr.io/welikecode/hermes-agent
   tag: "v2026.7.1"
-  # Pin by immutable digest for production (the CI prints it after each
-  # build). Empty falls back to repository:tag.
-  digest: ""
+  # Immutable digest of the v2026.7.1 build (ghcr.io/welikecode/hermes-agent),
+  # published by .github/workflows/hermes-image.yml on 2026-07-05.
+  digest: "sha256:d1fce9854fcad47d89a930918ebfaffa3ea4e5166ffd537e27bf52fb4bdbf077"
   pullPolicy: IfNotPresent
 
 hermes:
@@ -82,16 +82,38 @@ llm:
   extraEnv: {}
 
 ports:
-  dashboard: 9119
+  dashboard: 9119        # dashboard binds this on 127.0.0.1 (behind nginx)
+  dashboardProxy: 8080   # nginx Basic-Auth front — the Service targets this
   api: 8642
 
 service:
   # ClusterIP only — no hostNetwork, no NodePort. The upstream compose's
   # `network_mode: host` is replaced by explicit containerPorts + this
-  # Service. Public/team exposure (Cloudflare Tunnel + Access) is wired up
-  # separately once WP011's open questions land, same pattern as
-  # clusters/dev/cloudflared.
+  # Service. Public/team exposure (Cloudflare Tunnel + Access) layers on top.
   type: ClusterIP
+
+# ---------------------------------------------------------------------
+# Dashboard auth = nginx reverse proxy with HTTP Basic Auth in front of the
+# dashboard (user decision 2026-07-05). The dashboard binds 127.0.0.1 (its
+# own auth is off on loopback) and nginx is the sole gate; Cloudflare Access
+# is the intended OUTER layer once Zero Trust is enabled.
+# ---------------------------------------------------------------------
+dashboardProxy:
+  enabled: true
+  image:
+    repository: nginx
+    tag: "1.27-alpine"
+    # Pin by digest in production (leave empty to use the tag).
+    digest: ""
+  realm: "Hermes Dashboard"
+  clientMaxBodySize: "100m"
+  proxyReadTimeout: "3600s"   # long-lived WS/SSE streams (PTY/chat)
+  # Secret providing the htpasswd file (create out-of-band from Mintkey):
+  #   htpasswd -nbB <user> <pass> > htpasswd
+  #   kubectl -n hermes create secret generic hermes-dashboard-auth \
+  #     --from-file=htpasswd=./htpasswd
+  htpasswdSecretName: hermes-dashboard-auth
+  htpasswdSecretKey: htpasswd
 
 persistence:
   # Longhorn, not local-path: WP012's whole point is that Hermes' /opt/data
@@ -133,6 +155,13 @@ resources:
     limits:
       cpu: 200m
       memory: 256Mi
+  dashboardProxy:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi
 
 # Pins Hermes (and, when backup.enabled, the backup CronJob below) to a
 # predictable node. Documented rather than automatic because: (1) a
@@ -194,13 +223,9 @@ secrets:
     # PLACEHOLDER name. Must define the chosen provider's API key env var
     # (e.g. ANTHROPIC_API_KEY or OPENROUTER_API_KEY — WP011 open question 1).
     secretName: hermes-llm-secret
-  dashboardAuth:
-    enabled: true
-    # Must define HERMES_DASHBOARD_BASIC_AUTH_USER,
-    # HERMES_DASHBOARD_BASIC_AUTH_PASSWORD, HERMES_DASHBOARD_BASIC_AUTH_SECRET
-    # (the last one is the session-signing secret so sessions survive pod
-    # restarts — see openspec 011 "Exposure & auth").
-    secretName: hermes-dashboard-auth-secret
+  # NOTE: dashboard auth is handled by the nginx dashboardProxy (Basic Auth,
+  # htpasswd Secret above) — NOT by Hermes' own auth env vars. The dashboard
+  # binds loopback, so its built-in auth is disabled by design.
   mcpMintkey:
     enabled: true
     # Must define MCP_MINTKEY_AUTHORIZATION — the full "Bearer mk_agent_..."

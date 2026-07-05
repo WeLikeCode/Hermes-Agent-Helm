@@ -10,7 +10,9 @@ spec:
   ports:
     - name: dashboard
       port: {{ .Values.ports.dashboard }}
-      targetPort: dashboard
+      # When dashboardProxy is enabled, traffic terminates at the nginx
+      # Basic-Auth front (container port "http"); otherwise at the dashboard.
+      targetPort: {{ ternary "http" "dashboard" .Values.dashboardProxy.enabled }}
       protocol: TCP
     - name: api
       port: {{ .Values.ports.api }}

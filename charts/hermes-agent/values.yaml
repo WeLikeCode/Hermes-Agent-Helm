@@ -67,6 +67,9 @@ initContainer:
 #     egress to the tailnet) — NO Tailscale sidecar/operator needed.
 # ---------------------------------------------------------------------
 llm:
+  # Provider id for the seed-config init. "ollama" = local/self-hosted Ollama
+  # (OpenAI-compatible); NOT "openai".
+  provider: "ollama"
   # Ollama OpenAI-compatible base URL — the tailnet address of the Ollama
   # host. Replace OLLAMA-TS-HOST with the real Tailscale IP/MagicDNS name.
   openaiBaseUrl: "http://100.126.196.47:11434/v1"
@@ -116,8 +119,19 @@ dashboardProxy:
   #   htpasswd -nbB <user> <pass> > htpasswd
   #   kubectl -n hermes create secret generic hermes-dashboard-auth \
   #     --from-file=htpasswd=./htpasswd
-  htpasswdSecretName: hermes-dashboard-auth
-  htpasswdSecretKey: htpasswd
+  # (nginx no longer does auth — see dashboardAuth below.)
+
+# Dashboard built-in auth (gated mode). The seed-config init sets
+# dashboard.basic_auth in config.yaml from these values + a Secret so a fresh
+# deploy is reproducible. The Secret (dashboardAuth.secretName) must contain:
+#   password        — plaintext (init hashes it with scrypt)
+#   session-secret  — random hex (so sessions survive restarts)
+# Create it from Mintkey; see docs/OPERATIONS.md. optional:true means the pod
+# still starts if absent (dashboard would then have no password until seeded).
+dashboardAuth:
+  enabled: true
+  username: admin
+  secretName: hermes-dashboard-auth
 
 persistence:
   # Longhorn, not local-path: WP012's whole point is that Hermes' /opt/data

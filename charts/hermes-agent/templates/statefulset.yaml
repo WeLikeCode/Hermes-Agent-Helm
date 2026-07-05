@@ -64,6 +64,52 @@ spec:
               mountPath: {{ .Values.hermes.dataDir }}
           resources:
             {{- toYaml .Values.resources.initChown | nindent 12 }}
+        - name: seed-config
+          image: {{ include "hermes.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Seed reproducible config into /opt/data/config.yaml so a FRESH
+          # deploy (new PVC) comes up fully configured: LLM provider/model from
+          # values; dashboard basic_auth username from values + password_hash
+          # (hashed from the auth Secret) + session secret. Idempotent — safe to
+          # re-run every start. Runs as the hermes uid (post-chown) so config
+          # files are owned correctly.
+          securityContext:
+            runAsUser: {{ .Values.hermes.uid }}
+            runAsGroup: {{ .Values.hermes.gid }}
+            runAsNonRoot: true
+          env:
+            - name: HERMES_HOME
+              value: {{ .Values.hermes.dataDir | quote }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              cd /opt/hermes
+              hermes config set model.provider {{ .Values.llm.provider | quote }}
+              hermes config set model.base_url {{ .Values.llm.openaiBaseUrl | quote }}
+              hermes config set model.default {{ .Values.llm.model | quote }}
+              {{- if .Values.dashboardAuth.enabled }}
+              hermes config set dashboard.basic_auth.username {{ .Values.dashboardAuth.username | quote }}
+              if [ -s /seed/password ]; then
+                H=$(python3 -c "from plugins.dashboard_auth.basic import hash_password; print(hash_password(open('/seed/password').read().strip()))")
+                hermes config set dashboard.basic_auth.password_hash "$H"
+              fi
+              if [ -s /seed/session-secret ]; then
+                hermes config set dashboard.basic_auth.secret "$(cat /seed/session-secret)"
+              fi
+              {{- end }}
+              echo "seed-config: done"
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.hermes.dataDir }}
+            {{- if .Values.dashboardAuth.enabled }}
+            - name: dashboard-auth
+              mountPath: /seed
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources.initChown | nindent 12 }}
       containers:
         - name: gateway
           image: {{ include "hermes.image" . }}
@@ -161,8 +207,9 @@ spec:
         - name: dashboard-proxy
           image: {{ include "hermes.dashboardProxyImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # nginx reverse proxy: HTTP Basic Auth in front of the loopback
-          # dashboard. WebSocket (PTY/chat) + SSE (streaming) friendly.
+          # nginx: plain WS-capable reverse proxy for the dashboard. Auth is
+          # enforced by the dashboard's own basic_auth (gated bind), not here —
+          # external Basic Auth cannot authenticate the browser WebSocket.
           ports:
             - name: http
               containerPort: {{ .Values.ports.dashboardProxy }}
@@ -171,20 +218,22 @@ spec:
             - name: nginx-conf
               mountPath: /etc/nginx/conf.d/default.conf
               subPath: default.conf
-            - name: dashboard-htpasswd
-              mountPath: /etc/nginx/.htpasswd
-              subPath: {{ .Values.dashboardProxy.htpasswdSecretKey }}
           resources:
             {{- toYaml .Values.resources.dashboardProxy | nindent 12 }}
         {{- end }}
-      {{- if .Values.dashboardProxy.enabled }}
+      {{- if or .Values.dashboardProxy.enabled .Values.dashboardAuth.enabled }}
       volumes:
+        {{- if .Values.dashboardProxy.enabled }}
         - name: nginx-conf
           configMap:
             name: {{ include "hermes.fullname" . }}-nginx
-        - name: dashboard-htpasswd
+        {{- end }}
+        {{- if .Values.dashboardAuth.enabled }}
+        - name: dashboard-auth
           secret:
-            secretName: {{ .Values.dashboardProxy.htpasswdSecretName }}
+            secretName: {{ .Values.dashboardAuth.secretName }}
+            optional: true
+        {{- end }}
       {{- end }}
   volumeClaimTemplates:
     - metadata:

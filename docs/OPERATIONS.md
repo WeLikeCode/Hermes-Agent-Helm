@@ -76,7 +76,7 @@ Requirement: the model must support **≥64k context** (set Ollama `num_ctx`). P
 | Chat WS fails `4403` / `NS_ERROR_WEBSOCKET` | WS Host/Origin guard rejects public origin on loopback bind | bind `0.0.0.0` + gated `dashboard.basic_auth` (mints WS tickets) |
 | `Unknown provider 'openai'` | wrong provider id for Ollama | provider is `ollama` |
 | Browser "Server Not Found" but `dig` works | stale **negative-DNS cache** (looked up before the record existed) | flush DNS / restart browser / try mobile data |
-| Config lost after a fresh (new-PVC) deploy | `config.yaml` (auth hash + model) lives on the PVC, not in the chart | re-seed via the exec commands above (**TODO:** fold into chart/ConfigMap) |
+| Config lost after a fresh (new-PVC) deploy | ~~config on PVC only~~ **FIXED**: a `seed-config` initContainer seeds `config.yaml` from values (LLM) + the `hermes-dashboard-auth` Secret (password→hashed, session-secret) every start | ensure the Secret has `password` + `session-secret` keys |
 
 ## Testing — `scripts/smoke-test.sh`
 
@@ -98,7 +98,5 @@ on any failure, so it's CI-friendly. Overridable via `HERMES_NS`, `HERMES_POD`, 
 
 - **Cloudflare Access** (email SSO in front): pending the one-time Zero Trust enablement on the CF account.
   Hermes' own login is the gate until then.
-- **Config reproducibility:** seed `config.yaml` (auth + model) via the chart so a fresh deploy needs no
-  manual `hermes config set`.
 - **MCP-to-Mintkey + SSH terminal backend:** disabled in v1 (need a dedicated Hermes Mintkey agent bearer +
   the SSH host allowlist).

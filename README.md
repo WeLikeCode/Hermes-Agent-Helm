@@ -55,3 +55,6 @@ Consumed by the SpotUs cluster via ArgoCD (`clusters/dev/apps/hermes.yaml` in th
 this chart. Create the required Secrets (from Mintkey) first, set `llm.openaiBaseUrl` + `image.digest`,
 then let ArgoCD sync. Exposure (Cloudflare Tunnel + Access for the dashboard) follows the cluster's existing
 ingress pattern.
+
+## Operations & testing
+See **[docs/OPERATIONS.md](docs/OPERATIONS.md)** for access, the auth model, LLM config, known gotchas, and **`scripts/smoke-test.sh`** (end-to-end live test: pod health, Ollama chat, login → WS-ticket → chat WebSocket).

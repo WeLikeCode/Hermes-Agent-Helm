@@ -62,20 +62,20 @@ initContainer:
 # Cost: €0 (self-hosted). REQUIREMENTS to be aware of:
 #   * Hermes needs >=64k context — set Ollama num_ctx accordingly and pick
 #     a model that supports it (Gemma 3 12B = 128k ok; verify Qwen variant).
-#   * The Hermes POD must be able to reach the tailnet. Pods are NOT on the
-#     tailnet by default (only the nodes are) — options: a Tailscale sidecar
-#     container in this pod, the Tailscale k8s operator, or a subnet router.
-#     See README "Reaching the Ollama host over Tailscale".
+#   * Reachability VERIFIED 2026-07-05: a pod on this cluster reaches the
+#     Ollama host at 100.126.196.47:11434 directly (the k3s nodes route pod
+#     egress to the tailnet) — NO Tailscale sidecar/operator needed.
 # ---------------------------------------------------------------------
 llm:
   # Ollama OpenAI-compatible base URL — the tailnet address of the Ollama
   # host. Replace OLLAMA-TS-HOST with the real Tailscale IP/MagicDNS name.
-  openaiBaseUrl: "http://OLLAMA-TS-HOST:11434/v1"
+  openaiBaseUrl: "http://100.126.196.47:11434/v1"
   # Chosen model tag on the Ollama host. User options (pick one available):
-  #   gemma3:12b-it-q8_0   (Gemma 12B, Q8_0 quant — recommended, 128k ctx)
-  #   gemma3:12b           (or an MLX build if the host is Apple silicon)
-  #   qwen3:4b / qwen3:2b  (smaller/faster; confirm 64k-context support)
-  model: "gemma3:12b-it-q8_0"
+  #   gemma4:12b-mlx        (Gemma 12B MLX — recommended, present on host)
+  #   gemma4:12b-it-qat     (Gemma 12B QAT quant — also present)
+  #   qwen3.5:4b-mlx-bf16   (enhanced Qwen 4B) / qwen3.5:2b-mlx-bf16 (2B)
+  # Model tags VERIFIED present on the Ollama host 2026-07-05 (GET /api/tags).
+  model: "gemma4:12b-mlx"
   # Extra plain (non-secret) env vars passed to the gateway, e.g. to point
   # other Hermes provider knobs at the Ollama endpoint. The OpenAI-compatible
   # API key (any non-empty value for Ollama) comes from the llm Secret, not here.

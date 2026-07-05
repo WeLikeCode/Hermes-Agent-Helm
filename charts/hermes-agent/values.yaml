@@ -70,6 +70,10 @@ llm:
   # Provider id for the seed-config init. "ollama" = local/self-hosted Ollama
   # (OpenAI-compatible); NOT "openai".
   provider: "ollama"
+  # API key for the provider. Ollama ignores the value but Hermes requires one
+  # ("No API key configured for provider 'custom'" otherwise). Any non-empty
+  # string works for Ollama; use a real key for a paid provider.
+  apiKey: "ollama"
   # Ollama OpenAI-compatible base URL — the tailnet address of the Ollama
   # host. Replace OLLAMA-TS-HOST with the real Tailscale IP/MagicDNS name.
   openaiBaseUrl: "http://100.126.196.47:11434/v1"
@@ -141,7 +145,7 @@ persistence:
   # node loss keeps a healthy replica, zero data loss, single-writer
   # preserved.
   storageClass: longhorn
-  size: 5Gi
+  size: 20Gi
   accessMode: ReadWriteOnce
 
 resources:
@@ -218,7 +222,7 @@ backup:
   keepLast: 7
   persistence:
     storageClass: longhorn
-    size: 5Gi
+    size: 20Gi
     accessMode: ReadWriteOnce
 
 # ---------------------------------------------------------------------

@@ -69,7 +69,11 @@ spec:
           image: {{ include "hermes.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           # Agent core, cron scheduler, messaging adapters, OpenAI-compat API.
-          command: ["gateway", "run"]
+          # NOTE: `args`, NOT `command` — the image ENTRYPOINT is s6-overlay's
+          # `/init` (+ main-wrapper.sh); overriding it with `command` bypasses
+          # the supervision tree and fails with "exec gateway: not found".
+          # Upstream compose relies on this being CMD args to /init.
+          args: ["gateway", "run"]
           ports:
             - name: api
               containerPort: {{ .Values.ports.api }}
@@ -112,7 +116,8 @@ spec:
           # binds LOOPBACK only (127.0.0.1) — the nginx dashboard-proxy in
           # front is the sole reachable entrypoint and provides Basic Auth
           # (Hermes' own auth is off on a loopback bind, so nginx IS the gate).
-          command: ["dashboard", "--host", {{ ternary "127.0.0.1" "0.0.0.0" .Values.dashboardProxy.enabled | quote }}, "--no-open"]
+          # `args` not `command` — preserve the image's /init entrypoint (see gateway).
+          args: ["dashboard", "--host", {{ ternary "127.0.0.1" "0.0.0.0" .Values.dashboardProxy.enabled | quote }}, "--no-open"]
           {{- if not .Values.dashboardProxy.enabled }}
           ports:
             - name: dashboard

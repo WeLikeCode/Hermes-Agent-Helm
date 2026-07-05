@@ -118,12 +118,14 @@ spec:
           # (Hermes' own auth is off on a loopback bind, so nginx IS the gate).
           # `args` not `command` — preserve the image's /init entrypoint (see gateway).
           {{- if .Values.dashboardProxy.enabled }}
-          # Bind all-interfaces + --insecure: the dashboard's own Host/Origin
-          # guard only accepts loopback when bound to 127.0.0.1, which makes
-          # WebSockets (chat PTY /api/pty, /api/events) fail 4403 behind a
-          # proxy at a public hostname. 0.0.0.0 accepts any Host/Origin;
-          # --insecure delegates auth to the nginx Basic-Auth front (the gate).
-          args: ["dashboard", "--host", "0.0.0.0", "--insecure", "--no-open"]
+          # Bind all-interfaces so the dashboard accepts the public Host/Origin
+          # (its guard only accepts loopback when bound to 127.0.0.1 → WS chat
+          # fails 4403 behind a proxy). A public bind REQUIRES the dashboard's
+          # own auth provider (this Hermes has no unauthenticated public bind;
+          # --insecure is a deprecated no-op) — configure dashboard.basic_auth
+          # in config.yaml. That built-in auth also mints the WS tickets the
+          # browser needs, which external nginx Basic Auth cannot.
+          args: ["dashboard", "--host", "0.0.0.0", "--no-open"]
           {{- else }}
           args: ["dashboard", "--host", "127.0.0.1", "--no-open"]
           {{- end }}

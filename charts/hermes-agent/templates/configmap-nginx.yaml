@@ -19,9 +19,10 @@ data:
       client_max_body_size {{ .Values.dashboardProxy.clientMaxBodySize }};
 
       location / {
-        auth_basic "{{ .Values.dashboardProxy.realm }}";
-        auth_basic_user_file /etc/nginx/.htpasswd;
-
+        # Auth is enforced by the dashboard's own basic_auth (config.yaml) —
+        # a public bind requires it, and only it can mint the WS tickets the
+        # browser chat needs. nginx here is a WS-capable reverse proxy, not the
+        # auth gate (external Basic Auth cannot authenticate the WebSocket).
         proxy_pass http://127.0.0.1:{{ .Values.ports.dashboard }};
         # Dashboard binds 0.0.0.0 --insecure (accepts any Host/Origin), so we
         # forward the real public Host — needed for its WebSocket Host/Origin

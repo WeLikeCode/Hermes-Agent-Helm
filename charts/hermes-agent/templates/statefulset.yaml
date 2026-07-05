@@ -129,6 +129,13 @@ spec:
               value: {{ .Values.hermes.uid | quote }}
             - name: HERMES_GID
               value: {{ .Values.hermes.gid | quote }}
+            {{- if .Values.dashboardProxy.publicUrl }}
+            # The dashboard validates the Host header against its bound host;
+            # behind a proxy/tunnel it must be told its real public URL or it
+            # returns 400 "Invalid Host header".
+            - name: HERMES_DASHBOARD_PUBLIC_URL
+              value: {{ .Values.dashboardProxy.publicUrl | quote }}
+            {{- end }}
           envFrom:
             {{- if .Values.secrets.llm.enabled }}
             - secretRef:

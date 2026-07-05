@@ -100,6 +100,10 @@ service:
 # ---------------------------------------------------------------------
 dashboardProxy:
   enabled: true
+  # Public URL the dashboard is reached at (tunnel/Ingress hostname). REQUIRED
+  # when fronted by a proxy/tunnel — the dashboard rejects requests whose Host
+  # doesn't match its bind unless told its public URL. Empty = loopback/tailnet only.
+  publicUrl: ""
   image:
     repository: nginx
     tag: "1.27-alpine"

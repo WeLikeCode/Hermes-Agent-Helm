@@ -1,0 +1,83 @@
+name: hermes-image (build + push to GHCR)
+
+# Builds the Hermes Agent image from the ./hermes-agent git submodule
+# (NousResearch/hermes-agent, MIT — pinned by the submodule commit) and
+# publishes to ghcr.io/welikecode/hermes-agent. Because this repo lives in
+# the WeLikeCode org and pushes to that org's own package namespace, the
+# built-in GITHUB_TOKEN (packages: write) is sufficient — no external PAT.
+
+on:
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Push to GHCR (false = build only)"
+        required: true
+        default: "true"
+        type: boolean
+  push:
+    branches: [main]
+    paths:
+      - "hermes-agent"            # submodule bump
+      - ".github/workflows/hermes-image.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/welikecode/hermes-agent
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout (with submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Derive image tag from the pinned submodule
+        id: meta
+        run: |
+          cd hermes-agent
+          TAG="$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          grep -qi "MIT License" LICENSE || { echo "::error::submodule LICENSE is not MIT" >&2; exit 1; }
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' || inputs.push == true
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push) image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: hermes-agent
+          file: hermes-agent/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name == 'push' || inputs.push == true }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.meta.outputs.sha }}
+            org.opencontainers.image.source=https://github.com/NousResearch/hermes-agent
+            org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+
+      - name: Report immutable digest
+        if: steps.build.outputs.digest != ''
+        run: |
+          REF="${{ env.IMAGE }}@${{ steps.build.outputs.digest }}"
+          echo "IMAGE_REF=${REF}"
+          echo "### Hermes image published" >> "$GITHUB_STEP_SUMMARY"
+          echo "Set \`image.digest\` in charts/hermes-agent/values.yaml to:" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"

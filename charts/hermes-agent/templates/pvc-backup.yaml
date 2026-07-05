@@ -1,0 +1,20 @@
+{{- if and .Values.enabled .Values.backup.enabled }}
+# A SEPARATE Longhorn PVC (not the StatefulSet's volumeClaimTemplate) that
+# the backup CronJob tars /opt/data into. Kept off the primary volume's
+# replicas so logical corruption of the live data doesn't also corrupt the
+# backup. Off-cluster S3 backup of this PVC is explicitly out of scope
+# (deferred to WP008 / Object Storage) — never wire this to S3.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "hermes.fullname" . }}-backup
+  labels:
+    {{- include "hermes.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.backup.persistence.accessMode }}
+  storageClassName: {{ .Values.backup.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.backup.persistence.size }}
+{{- end }}

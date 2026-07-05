@@ -1,0 +1,17 @@
+apiVersion: v2
+name: hermes-agent
+description: Hermes Agent (Nous Research) — single-writer StatefulSet, Longhorn-durable /opt/data, gateway+dashboard, secrets by reference.
+  Hermes Agent (Nous Research, MIT) — single-writer SQLite/JSON agent state
+  in /opt/data. StatefulSet (replicas: 1) with gateway + dashboard containers
+  sharing one Longhorn-backed PVC (2 replicas, survives a node loss), a
+  backup CronJob (defense-in-depth, separate Longhorn PVC), and all
+  deploy-time secrets wired as k8s Secret references — never embedded.
+  See openspec/changes/011-hermes-agent.md (architecture/decisions) and
+  openspec/changes/012-hermes-image-and-chart.md (this WP's task list).
+  WP012 task 4: authored + static-validated only, NOT live-deployed here.
+type: application
+version: 0.1.0
+# Tracks the upstream Hermes Agent version referenced in the WP011 research
+# (github.com/NousResearch/hermes-agent). WP012 task 3 builds + pins the
+# actual image digest consumed via values.image.digest.
+appVersion: "0.18.0"

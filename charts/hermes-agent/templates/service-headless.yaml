@@ -1,0 +1,22 @@
+{{- if .Values.enabled }}
+# Required by the StatefulSet's spec.serviceName (headless Service for pod
+# DNS identity). Not meant for external/team traffic — use the ClusterIP
+# Service (service.yaml) for that.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hermes.fullname" . }}-headless
+  labels:
+    {{- include "hermes.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  ports:
+    - name: dashboard
+      port: {{ .Values.ports.dashboard }}
+      targetPort: dashboard
+    - name: api
+      port: {{ .Values.ports.api }}
+      targetPort: api
+  selector:
+    {{- include "hermes.selectorLabels" . | nindent 4 }}
+{{- end }}

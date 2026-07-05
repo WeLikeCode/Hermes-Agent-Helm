@@ -1,0 +1,63 @@
+{{- if and .Values.enabled .Values.backup.enabled }}
+# Secondary, defense-in-depth backup (Longhorn's 2 replicas already cover
+# node loss — see openspec/changes/012-hermes-image-and-chart.md "Durability
+# decision"). This CronJob tars /opt/data into the separate PVC from
+# pvc-backup.yaml on a schedule and prunes to the last N archives.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "hermes.fullname" . }}-backup
+  labels:
+    {{- include "hermes.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "hermes.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          {{- with .Values.nodeSelector }}
+          # Pinned to the SAME node as the StatefulSet's pod (see the
+          # top-level `nodeSelector` comment in values.yaml): the primary
+          # data PVC is a Longhorn RWO volume and can only be *attached* to
+          # one node at a time. Multiple pods on that SAME node can mount
+          # it, so co-locating this Job avoids a multi-attach error.
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: backup
+              image: {{ include "hermes.initImage" . }}
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  ts=$(date +%Y%m%d%H%M%S)
+                  tar -czf "/backup/hermes-data-${ts}.tar.gz" -C {{ .Values.hermes.dataDir }} .
+                  cd /backup
+                  ls -1t hermes-data-*.tar.gz | tail -n +{{ add .Values.backup.keepLast 1 }} | xargs -r rm -f
+              volumeMounts:
+                - name: data
+                  mountPath: {{ .Values.hermes.dataDir }}
+                  readOnly: true
+                - name: backup
+                  mountPath: /backup
+              resources:
+                {{- toYaml .Values.resources.backup | nindent 16 }}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                # Name Kubernetes assigns to the StatefulSet's "data"
+                # volumeClaimTemplate for pod ordinal 0 (the only pod,
+                # replicas: 1).
+                claimName: {{ include "hermes.dataPVCName" . }}
+                readOnly: true
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ include "hermes.fullname" . }}-backup
+{{- end }}

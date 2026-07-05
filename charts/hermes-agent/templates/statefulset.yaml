@@ -1,0 +1,148 @@
+{{- if .Values.enabled }}
+{{- if ne (int .Values.replicaCount) 1 }}
+{{- fail "hermes: replicaCount must stay 1 — Hermes is single-writer SQLite/JSON state (see openspec/changes/011-hermes-agent.md, 'Storage: local-only, no external DB'); scaling out will corrupt data." }}
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "hermes.fullname" . }}
+  labels:
+    {{- include "hermes.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "hermes.fullname" . }}-headless
+  replicas: {{ .Values.replicaCount }}
+  # Ordered, never-parallel pod management — matches the single-writer
+  # requirement (also the StatefulSet default; spelled out for clarity).
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      {{- include "hermes.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "hermes.selectorLabels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "hermes.serviceAccountName" . }}
+      # Explicit containerPorts (below) + a normal ClusterIP Service
+      # replace the upstream compose's `network_mode: host` — hostNetwork
+      # is deliberately never set here.
+      securityContext:
+        fsGroup: {{ .Values.hermes.gid }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: chown-data
+          image: {{ include "hermes.initImage" . }}
+          # The upstream image starts as root and remaps to HERMES_UID/GID
+          # internally on boot — pre-chown the volume to that UID/GID here
+          # so the remap has somewhere it already owns. Runs as root
+          # deliberately (chown itself needs it); do NOT add
+          # runAsNonRoot/runAsUser to this container.
+          command:
+            - sh
+            - -c
+            - chown -R {{ .Values.hermes.uid }}:{{ .Values.hermes.gid }} {{ .Values.hermes.dataDir }}
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.hermes.dataDir }}
+          resources:
+            {{- toYaml .Values.resources.initChown | nindent 12 }}
+      containers:
+        - name: gateway
+          image: {{ include "hermes.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Agent core, cron scheduler, messaging adapters, OpenAI-compat API.
+          command: ["gateway", "run"]
+          ports:
+            - name: api
+              containerPort: {{ .Values.ports.api }}
+              protocol: TCP
+          env:
+            - name: HERMES_UID
+              value: {{ .Values.hermes.uid | quote }}
+            - name: HERMES_GID
+              value: {{ .Values.hermes.gid | quote }}
+            {{- if .Values.llm.openaiBaseUrl }}
+            - name: OPENAI_BASE_URL
+              value: {{ .Values.llm.openaiBaseUrl | quote }}
+            {{- end }}
+            {{- range $k, $v := .Values.llm.extraEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            {{- if .Values.secrets.llm.enabled }}
+            - secretRef:
+                name: {{ .Values.secrets.llm.secretName }}
+            {{- end }}
+            {{- if .Values.secrets.mcpMintkey.enabled }}
+            - secretRef:
+                name: {{ .Values.secrets.mcpMintkey.secretName }}
+            {{- end }}
+            {{- if .Values.secrets.sshTerminal.enabled }}
+            - secretRef:
+                name: {{ .Values.secrets.sshTerminal.secretName }}
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.hermes.dataDir }}
+          resources:
+            {{- toYaml .Values.resources.gateway | nindent 12 }}
+        - name: dashboard
+          image: {{ include "hermes.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # React SPA + FastAPI admin UI.
+          command: ["dashboard", "--host", "0.0.0.0", "--no-open"]
+          ports:
+            - name: dashboard
+              containerPort: {{ .Values.ports.dashboard }}
+              protocol: TCP
+          env:
+            - name: HERMES_UID
+              value: {{ .Values.hermes.uid | quote }}
+            - name: HERMES_GID
+              value: {{ .Values.hermes.gid | quote }}
+          envFrom:
+            {{- if .Values.secrets.dashboardAuth.enabled }}
+            - secretRef:
+                name: {{ .Values.secrets.dashboardAuth.secretName }}
+            {{- end }}
+            {{- if .Values.secrets.llm.enabled }}
+            - secretRef:
+                name: {{ .Values.secrets.llm.secretName }}
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.hermes.dataDir }}
+          resources:
+            {{- toYaml .Values.resources.dashboard | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "hermes.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - {{ .Values.persistence.accessMode }}
+        storageClassName: {{ .Values.persistence.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+{{- end }}

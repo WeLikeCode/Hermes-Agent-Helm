@@ -90,6 +90,14 @@ spec:
               hermes config set model.base_url {{ .Values.llm.openaiBaseUrl | quote }}
               hermes config set model.default {{ .Values.llm.model | quote }}
               hermes config set model.api_key {{ .Values.llm.apiKey | quote }}
+              {{- range $name, $srv := .Values.mcpServers }}
+              {{- if $srv.enabled }}
+              # Networked MCP server (e.g. MintMory over SSE). config.yaml
+              # mcp_servers is a dict keyed by name; Hermes connects at startup.
+              hermes config set mcp_servers.{{ $name }}.transport {{ $srv.transport | default "sse" | quote }}
+              hermes config set mcp_servers.{{ $name }}.url {{ $srv.url | quote }}
+              {{- end }}
+              {{- end }}
               {{- if .Values.dashboardAuth.enabled }}
               hermes config set dashboard.basic_auth.username {{ .Values.dashboardAuth.username | quote }}
               if [ -s /seed/password ]; then

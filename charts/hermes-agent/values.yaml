@@ -259,3 +259,12 @@ secrets:
     # Must define TERMINAL_SSH_* (host/user/key/port, per host as needed).
     # Exact host scope (NUC fleet + which k8s nodes) is WP011 open question 5.
     secretName: hermes-ssh-terminal-secret
+
+# Networked MCP servers registered into Hermes' config.yaml `mcp_servers`
+# (dict keyed by name). Seeded by the seed-config init container. Each entry:
+# {enabled, url, transport}. transport defaults to sse.
+mcpServers:
+  mintmory:
+    enabled: false
+    url: ""
+    transport: sse

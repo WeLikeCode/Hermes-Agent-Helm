@@ -18,6 +18,7 @@ on:
     branches: [main]
     paths:
       - "hermes-agent"            # submodule bump
+      - "patches/**"              # build-time patch add/change → rebuild
       - ".github/workflows/hermes-image.yml"
 
 permissions:
@@ -38,11 +39,24 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Apply Hermes-Agent-Helm build patches to the pinned submodule
+        run: |
+          shopt -s nullglob
+          for p in patches/*.patch; do
+            echo "Applying $p"
+            git -C hermes-agent apply --verbose "../$p"
+          done
+
       - name: Derive image tag from the pinned submodule
         id: meta
         run: |
           cd hermes-agent
           TAG="$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)"
+          shopt -s nullglob
+          patch_files=(../patches/*.patch)
+          if [ "${#patch_files[@]}" -gt 0 ]; then
+            TAG="${TAG}-mcpfix1"
+          fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           grep -qi "MIT License" LICENSE || { echo "::error::submodule LICENSE is not MIT" >&2; exit 1; }

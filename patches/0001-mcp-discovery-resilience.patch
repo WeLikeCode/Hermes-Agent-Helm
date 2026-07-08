@@ -1,0 +1,452 @@
+diff --git a/tests/tools/test_mcp_stability.py b/tests/tools/test_mcp_stability.py
+index 494ebbbe0..2b3812512 100644
+--- a/tests/tools/test_mcp_stability.py
++++ b/tests/tools/test_mcp_stability.py
+@@ -559,34 +559,104 @@ class TestMCPInitialConnectionRetry:
+ 
+         asyncio.get_event_loop().run_until_complete(_run())
+ 
+-    def test_initial_connect_gives_up_after_max_retries(self):
+-        """Server gives up after _MAX_INITIAL_CONNECT_RETRIES failures."""
++    def test_initial_connect_defers_and_registers_on_later_success(self):
++        """Server exhausts the in-boot retry budget without giving up permanently.
++
++        The boot barrier (``_ready``) must release so the gateway finishes
++        booting, but the task must keep retrying in the background
++        (``_initial_registration_deferred``) and, once a later attempt
++        finally succeeds, complete the deferred registration instead of
++        leaving this server's tools unregistered forever.
++        """
+         from tools.mcp_tool import MCPServerTask, _MAX_INITIAL_CONNECT_RETRIES
+ 
+         call_count = 0
++        # Fail for the entire in-boot retry budget (1 initial + N retries),
++        # then succeed on the next (background) attempt.
++        fail_until = _MAX_INITIAL_CONNECT_RETRIES + 1
++        real_sleep = asyncio.sleep
++
++        async def _fast_sleep(_delay):
++            # Keep the cooperative yield (so the test coroutine and the
++            # server's task actually interleave) without paying real
++            # exponential-backoff wall-clock time.
++            await real_sleep(0)
++
++        async def _wait_until(predicate, timeout=2.0):
++            async def _poll():
++                while not predicate():
++                    await real_sleep(0)
++            await asyncio.wait_for(_poll(), timeout=timeout)
+ 
+         async def _run():
+             nonlocal call_count
+-            server = MCPServerTask("test-exhaust")
++            from tools.mcp_tool import _servers, _server_connecting, _server_connect_errors, _lock
++
++            server = MCPServerTask("test-defer")
++            # Gates the *background* success attempt so it cannot race ahead
++            # of this test's assertions about the deferred boot-barrier
++            # state — deterministic instead of relying on event-loop
++            # scheduling order (asyncio.wait_for around an Event adds extra
++            # scheduling hops that would otherwise let the retry loop's next
++            # attempt run before the test observes the deferred state).
++            resume_success = asyncio.Event()
+ 
+             async def fake_run_stdio(self_inner, config):
+                 nonlocal call_count
+                 call_count += 1
+-                raise ConnectionError("DNS resolution failed")
+-
+-            with patch.object(MCPServerTask, '_run_stdio', fake_run_stdio):
+-                task = asyncio.ensure_future(server.run({"command": "fake"}))
+-                await server._ready.wait()
+-
+-                # Should have an error after exhausting retries
+-                assert server._error is not None
+-                assert "DNS resolution failed" in str(server._error)
+-                # 1 initial + N retries = _MAX_INITIAL_CONNECT_RETRIES + 1 total attempts
+-                assert call_count == _MAX_INITIAL_CONNECT_RETRIES + 1
+-
+-                await task
++                if call_count <= fail_until:
++                    raise ConnectionError("DNS resolution failed")
++                await resume_success.wait()
++                # Later (background) attempt succeeds — replicate what the
++                # real _run_stdio success block does.
++                self_inner._ready.set()
++                self_inner._complete_deferred_registration()
++                await self_inner._shutdown_event.wait()
+ 
+-        asyncio.get_event_loop().run_until_complete(_run())
++            try:
++                with patch.object(MCPServerTask, '_run_stdio', fake_run_stdio), \
++                     patch('tools.mcp_tool.asyncio.sleep', new=_fast_sleep), \
++                     patch(
++                         'tools.mcp_tool._register_server_tools',
++                         return_value=["mcp_x"],
++                     ) as mock_register:
++                    task = asyncio.ensure_future(server.run({"command": "fake"}))
++
++                    # Boot barrier releases even though the server never
++                    # connected — this is the whole point of the fix. The
++                    # background success attempt is parked on resume_success
++                    # so it cannot have mutated any state yet.
++                    await _wait_until(lambda: server._ready.is_set())
++                    assert server._initial_registration_deferred is True
++                    assert server._error is not None
++                    assert "DNS resolution failed" in str(server._error)
++
++                    # The task must NOT have exited — it keeps retrying.
++                    assert not task.done()
++
++                    # Let the background retry proceed to the success attempt.
++                    resume_success.set()
++                    await _wait_until(
++                        lambda: server._initial_registration_deferred is False
++                    )
++
++                    assert server._error is None
++                    mock_register.assert_called_once()
++                    assert server._registered_tool_names == ["mcp_x"]
++                    assert call_count == fail_until + 1
++
++                    server._shutdown_event.set()
++                    await asyncio.wait_for(task, timeout=2)
++            finally:
++                # _complete_deferred_registration wrote this server into the
++                # real module-level registry — clean it up so it doesn't
++                # leak into other tests in this (per-file) process.
++                with _lock:
++                    _servers.pop("test-defer", None)
++                    _server_connecting.discard("test-defer")
++                    _server_connect_errors.pop("test-defer", None)
++
++        asyncio.get_event_loop().run_until_complete(asyncio.wait_for(_run(), timeout=10))
+ 
+     def test_initial_connect_retry_respects_shutdown(self):
+         """Shutdown during initial retry backoff aborts cleanly."""
+@@ -618,3 +688,62 @@ class TestMCPInitialConnectionRetry:
+                 await task
+ 
+         asyncio.get_event_loop().run_until_complete(_run())
++
++
++# ---------------------------------------------------------------------------
++# Fix 5: bounded startup concurrency for initial MCP discovery
++# ---------------------------------------------------------------------------
++
++class TestDiscoverAllConcurrencyBound:
++    """_discover_all caps concurrent initial connects via a semaphore."""
++
++    def test_discover_all_bounds_startup_concurrency(self):
++        """No more than _MAX_CONCURRENT_INITIAL_CONNECTS run concurrently."""
++        from tools.mcp_tool import (
++            register_mcp_servers,
++            _servers,
++            _server_connecting,
++            _server_connect_errors,
++            _lock,
++            _MAX_CONCURRENT_INITIAL_CONNECTS,
++        )
++
++        n_servers = _MAX_CONCURRENT_INITIAL_CONNECTS * 2
++        server_names = [f"concur-test-{i}" for i in range(n_servers)]
++        fake_config = {name: {"command": "test", "args": []} for name in server_names}
++
++        current = 0
++        max_seen = 0
++
++        async def fake_discover_and_register(name, cfg):
++            nonlocal current, max_seen
++            current += 1
++            max_seen = max(max_seen, current)
++            try:
++                # Yield long enough for other guarded coroutines to pile up
++                # against the semaphore if it weren't bounding them.
++                await asyncio.sleep(0.05)
++            finally:
++                current -= 1
++            return []
++
++        try:
++            with patch(
++                "tools.mcp_tool._discover_and_register_server",
++                side_effect=fake_discover_and_register,
++            ), patch("tools.mcp_tool._MCP_AVAILABLE", True):
++                register_mcp_servers(fake_config)
++        finally:
++            with _lock:
++                for name in server_names:
++                    _servers.pop(name, None)
++                    _server_connecting.discard(name)
++                    _server_connect_errors.pop(name, None)
++
++        assert max_seen <= _MAX_CONCURRENT_INITIAL_CONNECTS, (
++            f"observed {max_seen} concurrent connects, "
++            f"expected <= {_MAX_CONCURRENT_INITIAL_CONNECTS}"
++        )
++        # With 2x the cap and a shared artificial delay, the bound should
++        # actually be reached (not just trivially satisfied by under-load).
++        assert max_seen == _MAX_CONCURRENT_INITIAL_CONNECTS
+diff --git a/tests/tools/test_mcp_tool.py b/tests/tools/test_mcp_tool.py
+index 9b1302681..32f289c9b 100644
+--- a/tests/tools/test_mcp_tool.py
++++ b/tests/tools/test_mcp_tool.py
+@@ -1853,12 +1853,27 @@ class TestReconnection:
+         """First connection failure retries up to _MAX_INITIAL_CONNECT_RETRIES times.
+ 
+         Before the MCP resilience fix, initial failures gave up immediately.
+-        Now they retry with backoff to handle transient DNS/network blips.
++        Then they retried with backoff before giving up permanently. Now,
++        once the in-boot retry budget is exhausted, the boot barrier still
++        releases (so the gateway isn't blocked and this call still returns),
++        but the task does NOT exit — it keeps retrying in the background
++        (``_initial_registration_deferred``) instead of abandoning the
++        server for the gateway's lifetime.
+         """
+         from tools.mcp_tool import MCPServerTask, _MAX_INITIAL_CONNECT_RETRIES
+ 
+         run_count = 0
+         target_server = None
++        real_sleep = asyncio.sleep
++
++        async def _fast_sleep(_delay):
++            # Keep the cooperative yield (so the test coroutine and the
++            # server's still-retrying background task actually interleave)
++            # without paying real exponential-backoff wall-clock time, and
++            # without busy-looping forever (a fully non-yielding mock sleep
++            # would starve the event loop since this server never stops
++            # retrying).
++            await real_sleep(0)
+ 
+         original_run_stdio = MCPServerTask._run_stdio
+ 
+@@ -1875,15 +1890,25 @@ class TestReconnection:
+             target_server = server
+ 
+             with patch.object(MCPServerTask, "_run_stdio", patched_run_stdio), \
+-                 patch("asyncio.sleep", new_callable=AsyncMock):
+-                await server.run({"command": "test"})
++                 patch("asyncio.sleep", new=_fast_sleep):
++                task = asyncio.ensure_future(server.run({"command": "test"}))
++                await server._ready.wait()
+ 
+-            # Now retries up to _MAX_INITIAL_CONNECT_RETRIES before giving up
+-            assert run_count == _MAX_INITIAL_CONNECT_RETRIES + 1
+-            assert server._error is not None
+-            assert "cannot connect" in str(server._error)
++                # Boot barrier releases after exhausting the in-boot budget.
++                assert run_count >= _MAX_INITIAL_CONNECT_RETRIES + 1
++                assert server._error is not None
++                assert "cannot connect" in str(server._error)
+ 
+-        asyncio.run(_test())
++                # Unlike the old give-up-permanently behavior, the task must
++                # NOT have exited — it's still retrying in the background.
++                assert not task.done()
++                assert server._initial_registration_deferred is True
++
++                # Clean shutdown: stop the background retry loop.
++                server._shutdown_event.set()
++                await asyncio.wait_for(task, timeout=5)
++
++        asyncio.run(asyncio.wait_for(_test(), timeout=10))
+ 
+     def test_initial_oauth_failure_does_not_retry(self):
+         """Initial OAuth failures stop immediately to avoid repeated browser prompts."""
+diff --git a/tools/mcp_tool.py b/tools/mcp_tool.py
+index 5622d68be..209e55c09 100644
+--- a/tools/mcp_tool.py
++++ b/tools/mcp_tool.py
+@@ -290,6 +290,14 @@ _MAX_RECONNECT_RETRIES = 5
+ _MAX_INITIAL_CONNECT_RETRIES = 3 # retries for the very first connection attempt
+ _MAX_BACKOFF_SECONDS = 60
+ 
++# Cap how many MCP servers connect concurrently during initial discovery.
++# The unbounded startup burst can self-inflict transient tools/list failures
++# on networked backends; throttling removes that trigger. Env-overridable.
++try:
++    _MAX_CONCURRENT_INITIAL_CONNECTS = max(1, int(os.environ.get("HERMES_MCP_MAX_CONCURRENT_CONNECTS", "4")))
++except (TypeError, ValueError):
++    _MAX_CONCURRENT_INITIAL_CONNECTS = 4
++
+ # Keepalive cadence for HTTP/SSE sessions. The MCP spec lets a server expire
+ # idle sessions on any TTL it chooses (Streamable HTTP "Session Management"),
+ # so a client that wants a session to survive idle periods MUST refresh faster
+@@ -1430,6 +1438,7 @@ class MCPServerTask:
+         "_rpc_lock", "_pending_refresh_tasks",
+         "_pending_call_context",
+         "initialize_result", "_ping_unsupported",
++        "_initial_registration_deferred",
+     )
+ 
+     def __init__(self, name: str):
+@@ -1483,6 +1492,13 @@ class MCPServerTask:
+         # back to ``list_tools`` (the pre-ping probe) so we neither spam pings
+         # nor reconnect-loop. Reset on each fresh transport connection.
+         self._ping_unsupported: bool = False
++        # Set True when the initial-connect retry budget is exhausted but we
++        # release the boot barrier and keep retrying in the background
++        # instead of giving up permanently (see the initial-connect branch of
++        # ``run()``'s exception handler). While True, this server's tools are
++        # NOT yet in the global registry — ``_complete_deferred_registration``
++        # finishes the job once a background retry finally connects.
++        self._initial_registration_deferred = False
+ 
+     def _is_http(self) -> bool:
+         """Check if this server uses HTTP transport."""
+@@ -1900,6 +1916,7 @@ class MCPServerTask:
+                     self.session = session
+                     await self._discover_tools()
+                     self._ready.set()
++                    self._complete_deferred_registration()
+                     # Session is live again: clear any breaker state from a
+                     # prior outage so the first call after recovery isn't
+                     # gated on a stale consecutive-failure count (#16788).
+@@ -2135,6 +2152,7 @@ class MCPServerTask:
+                     self.session = session
+                     await self._discover_tools()
+                     self._ready.set()
++                    self._complete_deferred_registration()
+                     # Session is live again: clear any breaker state from a
+                     # prior outage so the first call after recovery isn't
+                     # gated on a stale consecutive-failure count (#16788).
+@@ -2188,6 +2206,7 @@ class MCPServerTask:
+                         self.session = session
+                         await self._discover_tools()
+                         self._ready.set()
++                        self._complete_deferred_registration()
+                         # Session is live again: clear any breaker state from
+                         # a prior outage so the first call after recovery
+                         # isn't gated on a stale failure count (#16788).
+@@ -2215,6 +2234,7 @@ class MCPServerTask:
+                     self.session = session
+                     await self._discover_tools()
+                     self._ready.set()
++                    self._complete_deferred_registration()
+                     # Session is live again: clear any breaker state from a
+                     # prior outage so the first call after recovery isn't
+                     # gated on a stale consecutive-failure count (#16788).
+@@ -2388,11 +2408,12 @@ class MCPServerTask:
+             except Exception as exc:
+                 self.session = None
+ 
+-                # If this is the first connection attempt, retry with backoff
+-                # before giving up. A transient DNS/network blip at startup
+-                # should not permanently kill the server.
+-                # (Ported from Kilo Code's MCP resilience fix.)
+-                if not self._ready.is_set():
++                # INITIAL connect path (before first success) OR the background
++                # phase after the boot barrier was released but before the first
++                # successful connect. Keep this path ACTIVE (self-driven retry) —
++                # unlike the reconnect park, nothing external ever wakes a
++                # server that never connected once.
++                if not self._ready.is_set() or self._initial_registration_deferred:
+                     if _is_auth_error(exc):
+                         logger.warning(
+                             "MCP server '%s' failed initial OAuth authentication, "
+@@ -2400,33 +2421,42 @@ class MCPServerTask:
+                             self.name, exc,
+                         )
+                         self._error = exc
++                        self._initial_registration_deferred = False
+                         self._ready.set()
+                         return
+ 
+                     initial_retries += 1
+-                    if initial_retries > _MAX_INITIAL_CONNECT_RETRIES:
++                    if not self._ready.is_set() and initial_retries > _MAX_INITIAL_CONNECT_RETRIES:
++                        # Exhausted the in-boot fast-retry budget. Do NOT give up
++                        # permanently (that leaves the server's tools unregistered
++                        # for the gateway's lifetime). Instead release the boot
++                        # barrier so the gateway finishes booting, and keep
++                        # retrying in the background with capped backoff so a
++                        # slow/racy backend still eventually registers.
+                         logger.warning(
+-                            "MCP server '%s' failed initial connection after "
+-                            "%d attempts, giving up: %s",
++                            "MCP server '%s' initial connection still failing after "
++                            "%d attempts; releasing boot barrier and continuing to "
++                            "retry in the background: %s",
+                             self.name, _MAX_INITIAL_CONNECT_RETRIES, exc,
+                         )
+                         self._error = exc
++                        self._initial_registration_deferred = True
+                         self._ready.set()
+-                        return
++                    else:
++                        logger.warning(
++                            "MCP server '%s' initial connection failed "
++                            "(attempt %d/%d), retrying in %.0fs: %s",
++                            self.name, initial_retries,
++                            _MAX_INITIAL_CONNECT_RETRIES, backoff, exc,
++                        )
+ 
+-                    logger.warning(
+-                        "MCP server '%s' initial connection failed "
+-                        "(attempt %d/%d), retrying in %.0fs: %s",
+-                        self.name, initial_retries,
+-                        _MAX_INITIAL_CONNECT_RETRIES, backoff, exc,
+-                    )
+                     await asyncio.sleep(backoff)
+                     backoff = min(backoff * 2, _MAX_BACKOFF_SECONDS)
+ 
+-                    # Check if shutdown was requested during the sleep
+                     if self._shutdown_event.is_set():
+-                        self._error = exc
+-                        self._ready.set()
++                        if not self._ready.is_set():
++                            self._error = exc
++                            self._ready.set()
+                         return
+                     continue
+ 
+@@ -2537,6 +2567,29 @@ class MCPServerTask:
+             _forget_mcp_tool_server(tool_name)
+         self._registered_tool_names = []
+ 
++    def _complete_deferred_registration(self) -> None:
++        """After a deferred initial connect finally succeeds, do what
++        _discover_and_register_server would have done at boot: store the server
++        and register its tools. Synchronous (runs atomically on the MCP loop).
++        No-op unless a deferred initial registration is pending."""
++        if not self._initial_registration_deferred:
++            return
++        self._initial_registration_deferred = False
++        self._error = None
++        with _lock:
++            _server_connecting.discard(self.name)
++            _server_connect_errors.pop(self.name, None)
++            _servers[self.name] = self
++        self._registered_tool_names = _register_server_tools(
++            self.name, self, self._config
++        )
++        logger.info(
++            "MCP server '%s': connected on background retry — registered "
++            "%d tool(s) that were deferred at boot: %s",
++            self.name, len(self._registered_tool_names),
++            ", ".join(self._registered_tool_names),
++        )
++
+ 
+ # ---------------------------------------------------------------------------
+ # Module-level state
+@@ -4331,9 +4384,17 @@ def register_mcp_servers(servers: Dict[str, dict]) -> List[str]:
+ 
+     async def _discover_all():
+         server_names = list(new_servers.keys())
+-        # Connect to all servers in PARALLEL
++        # Connect to all servers in PARALLEL, but bounded — an unbounded
++        # startup burst can self-inflict transient tools/list failures on
++        # networked backends (see _MAX_CONCURRENT_INITIAL_CONNECTS above).
++        _sem = asyncio.Semaphore(_MAX_CONCURRENT_INITIAL_CONNECTS)
++
++        async def _guarded(name: str, cfg: dict) -> List[str]:
++            async with _sem:
++                return await _discover_one(name, cfg)
++
+         results = await asyncio.gather(
+-            *(_discover_one(name, cfg) for name, cfg in new_servers.items()),
++            *(_guarded(name, cfg) for name, cfg in new_servers.items()),
+             return_exceptions=True,
+         )
+         for name, result in zip(server_names, results):

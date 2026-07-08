@@ -92,10 +92,19 @@ spec:
               hermes config set model.api_key {{ .Values.llm.apiKey | quote }}
               {{- range $name, $srv := .Values.mcpServers }}
               {{- if $srv.enabled }}
-              # Networked MCP server (e.g. MintMory over SSE). config.yaml
-              # mcp_servers is a dict keyed by name; Hermes connects at startup.
-              hermes config set mcp_servers.{{ $name }}.transport {{ $srv.transport | default "sse" | quote }}
+              # Networked MCP server. config.yaml mcp_servers is a dict keyed by
+              # name; Hermes connects on agent tool-use. Omit `transport` for
+              # streamable-HTTP (Mintkey /mcp); set `transport: sse` for SSE
+              # (MintMory). Header values may use ${ENV_VAR} — Hermes
+              # interpolates them at runtime (single-quoted here so the seed
+              # shell writes the literal, not an empty expansion).
+              {{- if $srv.transport }}
+              hermes config set mcp_servers.{{ $name }}.transport {{ $srv.transport | quote }}
+              {{- end }}
               hermes config set mcp_servers.{{ $name }}.url {{ $srv.url | quote }}
+              {{- range $hk, $hv := ($srv.headers | default dict) }}
+              hermes config set mcp_servers.{{ $name }}.headers.{{ $hk }} '{{ $hv }}'
+              {{- end }}
               {{- end }}
               {{- end }}
               {{- if .Values.dashboardAuth.enabled }}

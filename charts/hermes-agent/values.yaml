@@ -27,10 +27,12 @@ image:
   # Built from the ./hermes-agent submodule (NousResearch/hermes-agent, MIT)
   # by .github/workflows/hermes-image.yml → ghcr.io/welikecode/hermes-agent.
   repository: ghcr.io/welikecode/hermes-agent
-  tag: "v2026.7.1"
-  # Immutable digest of the v2026.7.1 build (ghcr.io/welikecode/hermes-agent),
-  # published by .github/workflows/hermes-image.yml on 2026-07-05.
-  digest: "sha256:d1fce9854fcad47d89a930918ebfaffa3ea4e5166ffd537e27bf52fb4bdbf077"
+  tag: "v2026.7.1-mcpfix1"
+  # Immutable digest of the v2026.7.1-mcpfix1 build (ghcr.io/welikecode/hermes-agent),
+  # published by .github/workflows/hermes-image.yml on 2026-07-09 from merge 036f03a
+  # (PR #1): pinned submodule v2026.7.1 + patches/0001-mcp-discovery-resilience.patch
+  # (park-and-retry initial MCP discovery + bounded startup connect concurrency).
+  digest: "sha256:11b69ad23e95004383dcae43b6c2ca1eb9158627c8a2ccb7ad555d03e687d6c0"
   pullPolicy: IfNotPresent
 
 hermes:

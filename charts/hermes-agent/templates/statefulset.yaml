@@ -80,6 +80,15 @@ spec:
           env:
             - name: HERMES_HOME
               value: {{ .Values.hermes.dataDir | quote }}
+          # The seed shell expands ${ENV_VAR} references in MCP header values
+          # below (e.g. Mintkey's "Bearer mk_agent_…"), so it needs those
+          # secrets in its OWN env — Hermes does NOT interpolate config.yaml
+          # headers at runtime (tools/mcp_tool.py consumes them verbatim).
+          envFrom:
+            {{- if .Values.secrets.mcpMintkey.enabled }}
+            - secretRef:
+                name: {{ .Values.secrets.mcpMintkey.secretName }}
+            {{- end }}
           command:
             - sh
             - -c
@@ -95,15 +104,17 @@ spec:
               # Networked MCP server. config.yaml mcp_servers is a dict keyed by
               # name; Hermes connects on agent tool-use. Omit `transport` for
               # streamable-HTTP (Mintkey /mcp); set `transport: sse` for SSE
-              # (MintMory). Header values may use ${ENV_VAR} — Hermes
-              # interpolates them at runtime (single-quoted here so the seed
-              # shell writes the literal, not an empty expansion).
+              # (MintMory). Header values may use ${ENV_VAR} refs (e.g. Mintkey's
+              # Authorization): the SEED SHELL expands them (double-quoted below),
+              # so config.yaml is written with the RESOLVED value. Hermes does not
+              # interpolate headers at runtime, so the referenced env vars must be
+              # present on this init container (see envFrom above).
               {{- if $srv.transport }}
               hermes config set mcp_servers.{{ $name }}.transport {{ $srv.transport | quote }}
               {{- end }}
               hermes config set mcp_servers.{{ $name }}.url {{ $srv.url | quote }}
               {{- range $hk, $hv := ($srv.headers | default dict) }}
-              hermes config set mcp_servers.{{ $name }}.headers.{{ $hk }} '{{ $hv }}'
+              hermes config set mcp_servers.{{ $name }}.headers.{{ $hk }} "{{ $hv }}"
               {{- end }}
               {{- end }}
               {{- end }}

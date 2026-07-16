@@ -38,6 +38,21 @@ Ref: SpotUs WP014.
 
 Touches `tools/mcp_tool.py` and `tests/tools/test_mcp_stability.py`.
 
+### `0002-add-sshpass.patch`
+
+**What it does** — adds `sshpass` to the image's apt install line so the agent can
+supply the Mintkey brokered-SSH JWT as the SSH password non-interactively
+(`sshpass -p "$token" ssh -p 2222 <ssh_user>@<bastion> …`). The gateway already
+ships `git` + `openssh-client` but **not** `sshpass`, so brokered SSH via the
+Mintkey bastion (username = `ssh_connect.ssh_user`, password = the `request_token`
+JWT) had no way to inject the password without a controlling tty — every attempt
+failed with `Permission denied`. (`SSH_ASKPASS` also works, but `sshpass` matches
+the documented recipe / service descriptions.)
+
+Touches `Dockerfile` (one apt package: `sshpass`).
+
+Ref: SpotUs — Mintkey brokered-SSH from Hermes.
+
 ## Local build / test
 
 To reproduce the patched build locally:

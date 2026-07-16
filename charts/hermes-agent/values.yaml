@@ -29,10 +29,12 @@ image:
   repository: ghcr.io/welikecode/hermes-agent
   tag: "v2026.7.1-mcpfix1"
   # Immutable digest of the v2026.7.1-mcpfix1 build (ghcr.io/welikecode/hermes-agent),
-  # published by .github/workflows/hermes-image.yml on 2026-07-09 from merge 036f03a
-  # (PR #1): pinned submodule v2026.7.1 + patches/0001-mcp-discovery-resilience.patch
-  # (park-and-retry initial MCP discovery + bounded startup connect concurrency).
-  digest: "sha256:11b69ad23e95004383dcae43b6c2ca1eb9158627c8a2ccb7ad555d03e687d6c0"
+  # published by .github/workflows/hermes-image.yml on 2026-07-16 from main 0b617eb:
+  # pinned submodule v2026.7.1 + patches/0001-mcp-discovery-resilience.patch
+  # (park-and-retry initial MCP discovery) + patches/0002-add-sshpass.patch — adds
+  # sshpass so the agent can inject the Mintkey request_token JWT as the SSH password
+  # for brokered SSH via the bastion. (Prev digest: sha256:11b69ad…, 2026-07-09.)
+  digest: "sha256:0ee05eb715f14caafb7faef7cdf5184be5ad99364e6ebf3e22ea13df9af51a34"
   pullPolicy: IfNotPresent
 
 hermes:

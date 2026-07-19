@@ -29,6 +29,22 @@ spec:
           nodeSelector:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          # Hard requirement (not a nodeSelector pin) to co-locate this pod
+          # with the StatefulSet pod that holds the RWO "data" volume: that
+          # volume can only be Longhorn-attached to one node at a time, so a
+          # backup pod scheduled to any other node hits a multi-attach error
+          # and wedges forever under concurrencyPolicy: Forbid (see 13-day
+          # outage postmortem). requiredDuringScheduling is deliberate — a
+          # wrong-node schedule can never mount the volume, so a soft
+          # preference would still fail; this also follows the StatefulSet
+          # pod across node failover, unlike a static nodeSelector.
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      {{- include "hermes.selectorLabels" . | nindent 22 }}
+                  topologyKey: kubernetes.io/hostname
           containers:
             - name: backup
               image: {{ include "hermes.initImage" . }}

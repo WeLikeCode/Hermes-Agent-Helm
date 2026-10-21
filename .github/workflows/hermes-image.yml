@@ -55,7 +55,8 @@ jobs:
           shopt -s nullglob
           patch_files=(../patches/*.patch)
           if [ "${#patch_files[@]}" -gt 0 ]; then
-            TAG="${TAG}-mcpfix1"
+            # -spotus1 marks "built with Hermes-Agent-Helm build patches (see patches/README.md)"
+            TAG="${TAG}-spotus1"
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"

@@ -13,30 +13,22 @@ optionally your local checkout) before the Docker build.
 
 ## Patches
 
-### `0001-mcp-discovery-resilience.patch`
+### Dropped: `0001-mcp-discovery-resilience.patch` (WP019, 2026-10-21)
 
-**What it does** — fixes a boot-time MCP tool discovery bug where a server
-that fails its first few connection attempts (e.g. during a concurrent
-startup burst) was permanently abandoned: its tools were never registered
-for the gateway's lifetime, even if the backend came up moments later.
+Removed when the submodule was bumped from `v2026.7.1` to `v2026.9.24`
+(Hermes v0.21.5). Upstream has absorbed the fix. Parking a server after 3
+failed initial connects, re-probing it (every 300 s), and registering its tools
+on recovery arrived in v2026.7.7; the startup discovery concurrency cap
+(`mcp.discovery_concurrency`, default 4) only arrived in v2026.9.21.
 
-- `MCPServerTask.run()`'s initial-connect path now "parks and retries"
-  instead of giving up: once the in-boot fast-retry budget
-  (`_MAX_INITIAL_CONNECT_RETRIES`) is exhausted, it releases the boot
-  barrier (so gateway startup isn't blocked) but keeps retrying with capped
-  exponential backoff in the background.
-- When a deferred initial connect finally succeeds, `_complete_deferred_registration()`
-  performs the registration that would normally have happened at boot
-  (storing the server and registering its tools into the global registry).
-- Initial MCP server discovery concurrency is now bounded
-  (`_MAX_CONCURRENT_INITIAL_CONNECTS`, default 4, override via
-  `HERMES_MCP_MAX_CONCURRENT_CONNECTS`) — an unbounded startup burst was
-  itself a trigger for the transient `tools/list` failures that used to
-  cause permanent give-up.
-
-Ref: SpotUs WP014.
-
-Touches `tools/mcp_tool.py` and `tests/tools/test_mcp_stability.py`.
+Known residual gap: a backend that **hangs** beyond `connect_timeout` (60 s) is
+cancelled and is not parked or self-probed. It still recovers on its own: the
+gateway's MCP config-reconcile chore (`gateway/run.py`, 60 s tick) re-attempts
+any configured-but-not-live server once its per-server connect cooldown lapses
+(30 s doubling up to 600 s, `tools/mcp_tool.py`;
+`reconcile_mcp_servers_with_config` in `tools/mcp_tool_discovery.py`), so the
+worst case is roughly 12 min. A `CancelledError` for an MCP server in the
+gateway log does not by itself require a pod restart.
 
 ### `0002-add-sshpass.patch`
 
@@ -49,7 +41,13 @@ JWT) had no way to inject the password without a controlling tty — every attem
 failed with `Permission denied`. (`SSH_ASKPASS` also works, but `sshpass` matches
 the documented recipe / service descriptions.)
 
-Touches `Dockerfile` (one apt package: `sshpass`).
+Touches `Dockerfile` (one apt package: `sshpass`, inserted after `openssh-client`
+on the base apt install line).
+
+Rebased onto, and verified against, `v2026.9.24` only (WP019). It does **not**
+apply as-is to other tags (seven other tags checked, including v2026.9.21,
+v0.21.6, v0.21.7 and v0.22.x; the Dockerfile apt line drifts between releases),
+so re-rebase it on every submodule bump.
 
 Ref: SpotUs — Mintkey brokered-SSH from Hermes.
 
@@ -58,14 +56,19 @@ Ref: SpotUs — Mintkey brokered-SSH from Hermes.
 To reproduce the patched build locally:
 
 ```bash
-git -C hermes-agent apply patches/0001-mcp-discovery-resilience.patch
+for p in patches/*.patch; do git -C hermes-agent apply "../$p"; done
 ```
+
+Revert the working tree afterwards with `git -C hermes-agent checkout -- .`
+(the submodule must stay clean at its pinned tag; CI applies the patches only
+inside the runner). With any patch present the CI image tag is
+`<submodule tag>-spotus1` (e.g. `v2026.9.24-spotus1`).
 
 To verify a patch still applies cleanly against a pristine submodule
 checkout (e.g. after bumping the pinned submodule commit):
 
 ```bash
-git -C hermes-agent apply --check patches/0001-mcp-discovery-resilience.patch
+for p in patches/*.patch; do git -C hermes-agent apply --check "../$p" && echo "OK $p"; done
 ```
 
 ## Adding a new patch

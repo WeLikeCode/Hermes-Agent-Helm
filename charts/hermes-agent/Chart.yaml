@@ -11,4 +11,4 @@ description: >-
 type: application
 version: 0.1.0
 # Upstream Hermes Agent release pinned by the ./hermes-agent submodule.
-appVersion: "v2026.7.1"
+appVersion: "v2026.9.24"

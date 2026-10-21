@@ -9,7 +9,7 @@ release tag). We build its image and ship a chart around it.
 ## Layout
 ```
 Hermes-Agent-Helm/
-├── hermes-agent/                 git submodule → NousResearch/hermes-agent @ v2026.7.1 (MIT)
+├── hermes-agent/                 git submodule → NousResearch/hermes-agent @ v2026.9.24 (MIT)
 ├── charts/hermes-agent/          Helm chart (derived from the upstream docker-compose.yml)
 ├── .github/workflows/
 │   └── hermes-image.yml          builds hermes-agent/ → ghcr.io/welikecode/hermes-agent

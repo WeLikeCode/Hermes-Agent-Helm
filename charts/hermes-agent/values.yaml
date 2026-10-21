@@ -27,14 +27,17 @@ image:
   # Built from the ./hermes-agent submodule (NousResearch/hermes-agent, MIT)
   # by .github/workflows/hermes-image.yml → ghcr.io/welikecode/hermes-agent.
   repository: ghcr.io/welikecode/hermes-agent
-  tag: "v2026.7.1-mcpfix1"
-  # Immutable digest of the v2026.7.1-mcpfix1 build (ghcr.io/welikecode/hermes-agent),
-  # published by .github/workflows/hermes-image.yml on 2026-07-16 from main 0b617eb:
-  # pinned submodule v2026.7.1 + patches/0001-mcp-discovery-resilience.patch
-  # (park-and-retry initial MCP discovery) + patches/0002-add-sshpass.patch — adds
-  # sshpass so the agent can inject the Mintkey request_token JWT as the SSH password
-  # for brokered SSH via the bastion. (Prev digest: sha256:11b69ad…, 2026-07-09.)
-  digest: "sha256:0ee05eb715f14caafb7faef7cdf5184be5ad99364e6ebf3e22ea13df9af51a34"
+  tag: "v2026.9.24-spotus1"
+  # Immutable digest (OCI index, linux/amd64) of the v2026.9.24-spotus1 build
+  # (ghcr.io/welikecode/hermes-agent), published by .github/workflows/hermes-image.yml
+  # on 2026-10-21 from main b1dcd2c: pinned submodule v2026.9.24 (Hermes v0.21.5,
+  # commit f97608f) + patches/0002-add-sshpass.patch — adds sshpass so the agent can
+  # inject the Mintkey request_token JWT as the SSH password for brokered SSH via the
+  # bastion. Patch 0001 (MCP discovery park-and-retry) was DROPPED — upstream absorbed
+  # it (see patches/README.md). One-way /opt/data migration (config 32→46, state.db
+  # 17→30): rollback = revert this AND restore the PVC snapshot (WP019 T2b).
+  # (Prev digest: sha256:0ee05eb…, v2026.7.1-mcpfix1, 2026-07-16.)
+  digest: "sha256:dae1032c775807c052cb1dda4f508cfa442666d12c3bdbd65c782c628d605cb9"
   pullPolicy: IfNotPresent
 
 hermes:
